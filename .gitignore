@@ -1,0 +1,7 @@
+*.json
+*.pem
+*.log
+venv/*
+config.ini
+*__pycache__*
+.DS_Store

@@ -1,0 +1,5 @@
+[DEFAULT]
+neo4j_hostname = localhost
+neo4j_port = 7687
+neo4j_user = 
+neo4j_password = 
