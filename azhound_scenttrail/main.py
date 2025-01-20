@@ -19,9 +19,7 @@ class AzureRoleAnalyzer:
     # Using frozen sets for better performance
     ACCESS_ADMIN_ACTIONS = frozenset({
         'microsoft.authorization/roleassignments/write',
-        'microsoft.authorization/roledefinitions/write',
-        'microsoft.authorization/elevateaccess/action',
-        'microsoft.authorization/classicadministrators/write'
+        'microsoft.authorization/roledefinitions/write'
     })
 
     VM_EXEC_ACTIONS = frozenset({
