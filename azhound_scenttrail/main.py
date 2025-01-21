@@ -18,21 +18,19 @@ logger = logging.getLogger(__name__)
 class AzureRoleAnalyzer:
     # Using frozen sets for better performance
     ACCESS_ADMIN_ACTIONS = frozenset({
-        'microsoft.authorization/roleassignments/write',
-        'microsoft.authorization/roledefinitions/write'
+        ('microsoft.authorization/roleassignments/write'),
+        ('microsoft.authorization/roledefinitions/write')
     })
 
     VM_EXEC_ACTIONS = frozenset({
-        'microsoft.compute/virtualmachines/runcommand/action',
-        'microsoft.compute/virtualmachines/runcommands/write',
-        'microsoft.compute/sshpublickeys/write',
-        'microsoft.compute/sshpublickeys/generatekeypair/action',
-        'microsoft.compute/virtualmachines/extensions/write'
+        ('microsoft.compute/virtualmachines/runcommand/action'),
+        ('microsoft.compute/virtualmachines/runcommands/write', 'Microsoft.Resources/subscriptions/resourcegroups/read'),
+        ('microsoft.compute/sshpublickeys/write', 'Microsoft.Compute/virtualMachines/read', 'Microsoft.Compute/virtualMachines/extensions/write')
     })
 
     VM_EXEC_DATA_ACTIONS = frozenset({
-        'microsoft.compute/virtualmachines/login/action',
-        'microsoft.compute/virtualmachines/loginasadmin/action'
+        ('microsoft.compute/virtualmachines/login/action'),
+        ('microsoft.compute/virtualmachines/loginasadmin/action')
     })
 
     EXCLUDED_ADMIN_ROLES = frozenset({
@@ -109,20 +107,18 @@ class AzureRoleAnalyzer:
                 result['owner'] = True
                 self.neo4j_manager.add_role_def_node(roledef)
             else:
-                for action in effective_actions.get('permitted_actions', []):
-                    action_name = action['name'].lower()
-                    if action_name in self.ACCESS_ADMIN_ACTIONS:
-                        if roledef_id not in self.EXCLUDED_ADMIN_ROLES:
-                            self.neo4j_manager.add_role_def_node(roledef)
-                            result['access_admin'] = True
-                    elif action_name in self.VM_EXEC_ACTIONS:
-                        self.neo4j_manager.add_role_def_node(roledef)
-                        result['vm_exec'] = True
-                for action in effective_actions.get('permitted_data_actions', []):
-                    action_name = action['name'].lower()
-                    if action_name in self.VM_EXEC_DATA_ACTIONS:
-                        self.neo4j_manager.add_role_def_node(roledef)
-                        result['vm_login'] = True
+                permitted_actions_set = {perm_action['name'].lower() for perm_action in effective_actions.get('permitted_actions', [])}
+                permitted_data_actions_set = {perm_action['name'].lower() for perm_action in effective_actions.get('permitted_data_actions', [])}
+                
+                if any(action_tuple.issubset(permitted_actions_set) for action_tuple in self.ACCESS_ADMIN_ACTIONS):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['access_admin'] = True
+                if any(action_tuple.issubset(permitted_actions_set) for action_tuple in self.VM_EXEC_ACTIONS):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['vm_exec'] = True
+                if any(action_tuple.issubset(permitted_data_actions_set) for action_tuple in self.VM_EXEC_DATA_ACTIONS):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['vm_login'] = True
 
             results.append((roledef_id, result))
         return results

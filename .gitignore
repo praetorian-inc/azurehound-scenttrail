@@ -5,3 +5,4 @@ venv/*
 config.ini
 *__pycache__*
 .DS_Store
+privesc_testing/*
