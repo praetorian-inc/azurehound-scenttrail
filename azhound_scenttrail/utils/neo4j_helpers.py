@@ -92,6 +92,24 @@ class Neo4jGraphManager:
             database_=self.config.database
         )
 
+    def set_service_principal_alt_name(self, object_id: str, alt_name: str) -> None:
+        """
+        Set a service principal alternative name
+        
+        Args:
+            object_id (str): ID of the service principal
+            alt_name (str): The "full" object ID of a service principal
+        """
+        self.driver.execute_query(
+            '''
+            MATCH (sp:AZServicePrincipal {objectid: $object_id}) 
+            SET sp.altname = $alt_name
+            ''',
+            object_id=object_id.upper(),
+            alt_name=alt_name.upper(),
+            database_=self.config.database
+        )
+
     def add_spring_app_node(self, entity_data: Dict[str, Any]) -> None:
         """
         Add or update a Spring App entity node.
@@ -323,6 +341,46 @@ class Neo4jGraphManager:
             database_=self.config.database
         )
 
+    def add_vm_update_relationship(self, scope: str, principal_id: str) -> None:
+        """
+        Create a VM update relationship between a principal and a VM.
+        
+        Args:
+            scope (str): VM scope
+            principal_id (str): ID of the principal
+        """
+        self.driver.execute_query(
+            '''
+            MATCH (vm:AZVM) 
+            WHERE vm.objectid STARTS WITH $scope
+            MATCH (principal {objectid: $principal_id})
+            MERGE (principal)-[:AZVMUpdate]->(vm)
+            ''',
+            scope=scope.upper(),
+            principal_id=principal_id.upper(),
+            database_=self.config.database
+        )
+
+    def add_assign_managed_identity_relationship(self, scope: str, principal_id: str) -> None:
+        """
+        Create an assign identity relationship between a principal and a service principal.
+        
+        Args:
+            scope (str): Service principal scope
+            principal_id (str): ID of the principal
+        """
+        self.driver.execute_query(
+            '''
+            MATCH (sp:AZServicePrincipal) 
+            WHERE sp.altname STARTS WITH $scope AND sp.serviceprincipaltype = 'ManagedIdentity'
+            MATCH (principal {objectid: $principal_id})
+            MERGE (principal)-[:AZAssignIdentity]->(sp)
+            ''',
+            scope=scope.upper(),
+            principal_id=principal_id.upper(),
+            database_=self.config.database
+        )
+
 # For backward compatibility
 def add_role_def_node(driver: GraphDatabase, roledef: Dict[str, Any]) -> None:
     manager = Neo4jGraphManager(driver)
@@ -335,6 +393,10 @@ def add_assignment_relationship(driver: GraphDatabase, principal_id: str, rolede
 def add_managed_identity_relationship(driver: GraphDatabase, object_id: str, managed_id: str) -> None:
     manager = Neo4jGraphManager(driver)
     manager.add_managed_identity_relationship(object_id, managed_id)
+
+def set_service_principal_alt_name(driver: GraphDatabase, object_id: str, alt_name: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.set_service_principal_alt_name(object_id, alt_name)
 
 def add_spring_app_node(driver: GraphDatabase, entity_data: Dict[str, Any]) -> None:
     manager = Neo4jGraphManager(driver)
@@ -379,3 +441,11 @@ def set_vm_aad_node(driver: GraphDatabase, vm_id: str, aad_enabled: bool) -> Non
 def add_vm_login_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
     manager = Neo4jGraphManager(driver)
     manager.add_vm_login_relationship(scope, principal_id)
+
+def add_vm_update_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.add_vm_update_relationship(scope, principal_id)
+
+def add_assign_managed_identity_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.add_assign_managed_identity_relationship(scope, principal_id)

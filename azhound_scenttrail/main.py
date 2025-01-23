@@ -17,21 +17,29 @@ logger = logging.getLogger(__name__)
 
 class AzureRoleAnalyzer:
     # Using frozen sets for better performance
-    ACCESS_ADMIN_ACTIONS = frozenset({
-        ('microsoft.authorization/roleassignments/write'),
-        ('microsoft.authorization/roledefinitions/write')
-    })
+    ACCESS_ADMIN_ACTIONS = [
+        set(['microsoft.authorization/roleassignments/write']),
+        set(['microsoft.authorization/roledefinitions/write'])
+    ]
 
-    VM_EXEC_ACTIONS = frozenset({
-        ('microsoft.compute/virtualmachines/runcommand/action'),
-        ('microsoft.compute/virtualmachines/runcommands/write', 'Microsoft.Resources/subscriptions/resourcegroups/read'),
-        ('microsoft.compute/sshpublickeys/write', 'Microsoft.Compute/virtualMachines/read', 'Microsoft.Compute/virtualMachines/extensions/write')
-    })
+    VM_EXEC_ACTIONS = [
+        set(['microsoft.compute/virtualmachines/runcommand/action']),
+        set(['microsoft.compute/virtualmachines/runcommands/write', 'Microsoft.Resources/subscriptions/resourcegroups/read']),
+        set(['microsoft.compute/sshpublickeys/write', 'microsoft.compute/virtualmachines/read', 'microsoft.compute/virtualmachines/extensions/write'])
+    ]
 
-    VM_EXEC_DATA_ACTIONS = frozenset({
-        ('microsoft.compute/virtualmachines/login/action'),
-        ('microsoft.compute/virtualmachines/loginasadmin/action')
-    })
+    VM_EXEC_DATA_ACTIONS = [
+        set(['microsoft.compute/virtualmachines/login/action']),
+        set(['microsoft.compute/virtualmachines/loginasadmin/action'])
+    ]
+
+    VM_UPDATE_ACTIONS = [
+        set(['microsoft.compute/virtualmachines/read', 'microsoft.compute/virtualmachines/write'])
+    ]
+
+    ASSIGN_MANAGED_IDENTITY_ACTIONS = [
+        set(['microsoft.managedidentity/userassignedidentities/assign/action'])
+    ]
 
     EXCLUDED_ADMIN_ROLES = frozenset({
         'bda0d508-adf1-4af0-9c28-88919fc3ae06',
@@ -101,26 +109,40 @@ class AzureRoleAnalyzer:
         for roledef in roledefs_batch:
             effective_actions = analysis_utils.process_effective(roledef, self.azure_services)
             roledef_id = roledef['data']['name']
-            result = {'owner': False, 'access_admin': False, 'vm_exec': False, 'vm_login': False}
+            result = {
+                'owner': False,
+                'access_admin': False,
+                'vm_exec': False,
+                'vm_login': False,
+                'vm_update': False,
+                'assign_managed_identity': False
+            }
 
             if effective_actions['is_owner_policy']:
                 result['owner'] = True
                 self.neo4j_manager.add_role_def_node(roledef)
             else:
-                permitted_actions_set = {perm_action['name'].lower() for perm_action in effective_actions.get('permitted_actions', [])}
-                permitted_data_actions_set = {perm_action['name'].lower() for perm_action in effective_actions.get('permitted_data_actions', [])}
+                permitted_actions_set = set([perm_action['name'].lower() for perm_action in effective_actions.get('permitted_actions', [])])
+                permitted_data_actions_set = set([perm_action['name'].lower() for perm_action in effective_actions.get('permitted_data_actions', [])])
                 
-                if any(action_tuple.issubset(permitted_actions_set) for action_tuple in self.ACCESS_ADMIN_ACTIONS):
+                if any(action_set.issubset(permitted_actions_set) for action_set in self.ACCESS_ADMIN_ACTIONS):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['access_admin'] = True
-                if any(action_tuple.issubset(permitted_actions_set) for action_tuple in self.VM_EXEC_ACTIONS):
+                if any(action_set.issubset(permitted_actions_set) for action_set in self.VM_EXEC_ACTIONS):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['vm_exec'] = True
-                if any(action_tuple.issubset(permitted_data_actions_set) for action_tuple in self.VM_EXEC_DATA_ACTIONS):
+                if any(action_set.issubset(permitted_data_actions_set) for action_set in self.VM_EXEC_DATA_ACTIONS):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['vm_login'] = True
+                if any(action_set.issubset(permitted_actions_set) for action_set in self.VM_UPDATE_ACTIONS):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['vm_update'] = True
+                if any(action_set.issubset(permitted_actions_set) for action_set in self.ASSIGN_MANAGED_IDENTITY_ACTIONS):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['assign_managed_identity'] = True
 
-            results.append((roledef_id, result))
+            if roledef_id not in self.EXCLUDED_ADMIN_ROLES:
+                results.append((roledef_id, result))
         return results
 
     def process_role_definitions(self, filename: str) -> Dict[str, Set[str]]:
@@ -136,6 +158,8 @@ class AzureRoleAnalyzer:
         access_admin_roles = set()
         vm_exec_roles = set()
         vm_login_roles = set()
+        vm_update_roles = set()
+        assign_managed_identity_roles = set()
 
         with ThreadPoolExecutor() as executor:
             futures = [executor.submit(self._process_roledef_batch, batch) for batch in batches]
@@ -150,12 +174,18 @@ class AzureRoleAnalyzer:
                         vm_exec_roles.add(roledef_id)
                     if result['vm_login']:
                         vm_login_roles.add(roledef_id)
+                    if result['vm_update']:
+                        vm_update_roles.add(roledef_id)
+                    if result['assign_managed_identity']:
+                        assign_managed_identity_roles.add(roledef_id)
 
         return {
             "owner_roles": owner_roles,
             "access_admin_roles": access_admin_roles,
             "vm_exec_roles": vm_exec_roles,
-            "vm_login_roles": vm_login_roles
+            "vm_login_roles": vm_login_roles,
+            "vm_update_roles": vm_update_roles,
+            "assign_managed_identity_roles": assign_managed_identity_roles
         }
 
     def process_azhound_file(self, filename: str, interesting_roles: Dict[str, Set[str]]) -> None:
@@ -180,9 +210,19 @@ class AzureRoleAnalyzer:
                                     aad_enabled = True
                                     break
                     self.neo4j_manager.set_vm_aad_node(vm_id, aad_enabled)
+                elif entity['kind'] == "AZServicePrincipal" and \
+                    "alternativeNames" in entity['data'] and \
+                    "isExplicit=True" in entity['data']['alternativeNames']:
+                    for alt_name in entity['data']['alternativeNames']:
+                        if "/subscriptions" in alt_name:
+                            self.neo4j_manager.set_service_principal_alt_name(entity['data']['id'], alt_name)
                 elif entity['kind'] == "AZSpringApp":
-                    self.neo4j_manager.add_spring_app_node(entity['data'])
+                    self.neo4j_manager.add_spring_app_node(entity)
+
                     self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], entity['data']['identity'].get('principalId', ''))
+                    user_assigned_ids = entity['data']['identity'].get('userAssignedIdentities', {})
+                    for user_assigned_id in user_assigned_ids.keys():
+                        self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], user_assigned_ids[user_assigned_id]['principalId'])
                 elif entity['kind'] == "AZManagedCluster":
                     service_principal_profile_obj = entity['data']['identity'].get('servicePrincipalProfile', {})
                     service_principal_profile_id = service_principal_profile_obj.get('clientId', '')
@@ -193,19 +233,31 @@ class AzureRoleAnalyzer:
                     user_assigned_id = kubelet_id.get('resourceId', '')
                     self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], user_assigned_id)
                 elif entity['kind'] == "AZContainerGroup":
-                    self.neo4j_manager.add_container_group_node(entity['data'])
+                    self.neo4j_manager.add_container_group_node(entity)
+                    
                     self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], entity['data']['identity'].get('principalId', ''))
+                    user_assigned_ids = entity['data']['identity'].get('userAssignedIdentities', {})
+                    for user_assigned_id in user_assigned_ids.keys():
+                        self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], user_assigned_ids[user_assigned_id]['principalId'])
                 elif entity['kind'] == "AZContainerApp":
-                    self.neo4j_manager.add_container_app_node(entity['data'])
+                    self.neo4j_manager.add_container_app_node(entity)
                     self.neo4j_manager.add_container_app_managed_by_relationship(entity['data']['id'], entity['data'].get('managedBy', ''))
+
                     self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], entity['data']['identity'].get('principalId', ''))
+                    user_assigned_ids = entity['data']['identity'].get('userAssignedIdentities', {})
+                    for user_assigned_id in user_assigned_ids.keys():
+                        self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], user_assigned_ids[user_assigned_id]['principalId'])
                 elif entity['kind'] == "AZRedHatOpenShiftCluster":
-                    self.neo4j_manager.add_openshift_cluster_node(entity['data'])
+                    self.neo4j_manager.add_openshift_cluster_node(entity)
                     self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], entity['data']['identity'].get('clientId', ''))
                 elif entity['kind'] == "AZServiceFabricClusterApp" or \
                     entity['kind'] == "AZServiceFabricManagedClusterApp":
-                    self.neo4j_manager.add_service_fabric_cluster_app_node(entity['data'])
+                    self.neo4j_manager.add_service_fabric_cluster_app_node(entity)
+
                     self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], entity['data']['identity'].get('principalId', ''))
+                    user_assigned_ids = entity['data']['identity'].get('userAssignedIdentities', {})
+                    for user_assigned_id in user_assigned_ids.keys():
+                        self.neo4j_manager.add_managed_identity_relationship(entity['data']['id'], user_assigned_ids[user_assigned_id]['principalId'])
             return assignments
 
         with open(filename) as f:
@@ -242,6 +294,10 @@ class AzureRoleAnalyzer:
                     self.neo4j_manager.add_vm_exec_relationship(scope, principal_id)
                 elif roledef_id in interesting_roles['vm_login_roles']:
                     self.neo4j_manager.add_vm_login_relationship(scope, principal_id)
+                if roledef_id in interesting_roles['vm_update_roles']:
+                    self.neo4j_manager.add_vm_update_relationship(scope, principal_id)
+                if roledef_id in interesting_roles['assign_managed_identity_roles']:
+                    self.neo4j_manager.add_assign_managed_identity_relationship(scope, principal_id)
 
         ASSIGNMENT_BATCH_SIZE = 50
         assignment_batches = [unique_assignments[i:i + ASSIGNMENT_BATCH_SIZE] 
@@ -271,13 +327,7 @@ def main():
     interesting_roles = analyzer.process_role_definitions(args.roledef_filename)
 
     # Print findings
-    print("\nFound owner role definitions:")
-    for role in interesting_roles['owner_roles']:
-        print(role)
-
-    print("\nFound access administrator role definitions:")
-    for role in interesting_roles['access_admin_roles']:
-        print(role)
+    print(interesting_roles)
 
     print("\nProcessing role assignments...")
     analyzer.process_azhound_file(args.azurehound_filename, interesting_roles)
