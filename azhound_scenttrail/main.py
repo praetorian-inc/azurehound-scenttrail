@@ -18,28 +18,75 @@ logger = logging.getLogger(__name__)
 class AzureRoleAnalyzer:
     # Using frozen sets for better performance
     ACCESS_ADMIN_ACTIONS = [
-        set(['microsoft.authorization/roleassignments/write']),
-        set(['microsoft.authorization/roledefinitions/write'])
+        frozenset(['microsoft.authorization/roleassignments/write']),
+        frozenset(['microsoft.authorization/roledefinitions/write'])
     ]
 
     VM_EXEC_ACTIONS = [
-        set(['microsoft.compute/virtualmachines/runcommand/action']),
-        set(['microsoft.compute/virtualmachines/runcommands/write', 'Microsoft.Resources/subscriptions/resourcegroups/read']),
-        set(['microsoft.compute/sshpublickeys/write', 'microsoft.compute/virtualmachines/read', 'microsoft.compute/virtualmachines/extensions/write'])
+        frozenset(['microsoft.compute/virtualmachines/runcommand/action']),
+        frozenset(['microsoft.compute/virtualmachines/runcommands/write',
+                   'microsoft.resources/subscriptions/resourcegroups/read']),
+        frozenset(['microsoft.compute/sshpublickeys/write',
+                   'microsoft.compute/virtualmachines/read',
+                   'microsoft.compute/virtualmachines/extensions/write'])
     ]
 
     VM_EXEC_DATA_ACTIONS = [
-        set(['microsoft.compute/virtualmachines/login/action']),
-        set(['microsoft.compute/virtualmachines/loginasadmin/action'])
+        frozenset(['microsoft.compute/virtualmachines/login/action']),
+        frozenset(['microsoft.compute/virtualmachines/loginasadmin/action'])
     ]
 
-    VM_UPDATE_ACTIONS = [
-        set(['microsoft.compute/virtualmachines/read', 'microsoft.compute/virtualmachines/write'])
-    ]
+    VM_UPDATE_ACTIONS = frozenset(['microsoft.compute/virtualmachines/read',
+                                   'microsoft.compute/virtualmachines/write'])
 
-    ASSIGN_MANAGED_IDENTITY_ACTIONS = [
-        set(['microsoft.managedidentity/userassignedidentities/assign/action'])
-    ]
+    VM_CREATE_ACTIONS = frozenset([
+        'microsoft.compute/virtualmachines/extensions/write',
+        'microsoft.compute/virtualmachines/read',
+        'microsoft.compute/virtualmachines/write',
+        'microsoft.managedidentity/userassignedidentities/assign/action',
+        'microsoft.network/networkinterfaces/join/action',
+        'microsoft.network/networkinterfaces/read',
+        'microsoft.network/networkinterfaces/write',
+        'microsoft.network/networksecuritygroups/join/action',
+        'microsoft.network/networksecuritygroups/read',
+        'microsoft.network/networksecuritygroups/write',
+        'microsoft.network/publicipaddresses/join/action',
+        'microsoft.network/publicipaddresses/read',
+        'microsoft.network/publicipaddresses/write',
+        'microsoft.network/virtualnetworks/read',
+        'microsoft.network/virtualnetworks/subnets/join/action',
+        'microsoft.network/virtualnetworks/write',
+        'microsoft.resources/deployments/operationstatuses/read',
+        'microsoft.resources/deployments/read',
+        'microsoft.resources/deployments/write',
+        'microsoft.resources/subscriptions/resourcegroups/read',
+    ])
+
+    VM_CREATE_AADLOGIN_ACTIONS = frozenset([
+        'microsoft.compute/virtualmachines/extensions/read',
+        'microsoft.compute/virtualmachines/extensions/write',
+        'microsoft.compute/virtualmachines/read',
+        'microsoft.compute/virtualmachines/write',
+        'microsoft.managedidentity/userassignedidentities/assign/action',
+        'microsoft.network/networkinterfaces/join/action',
+        'microsoft.network/networkinterfaces/read',
+        'microsoft.network/networkinterfaces/write',
+        'microsoft.network/networksecuritygroups/join/action',
+        'microsoft.network/networksecuritygroups/read',
+        'microsoft.network/networksecuritygroups/write',
+        'microsoft.network/publicipaddresses/join/action',
+        'microsoft.network/publicipaddresses/read',
+        'microsoft.network/publicipaddresses/write',
+        'microsoft.network/virtualnetworks/read',
+        'microsoft.network/virtualnetworks/subnets/join/action',
+        'microsoft.network/virtualnetworks/write',
+        'microsoft.resources/deployments/operationstatuses/read',
+        'microsoft.resources/deployments/read'
+        'microsoft.resources/deployments/write',
+        'microsoft.resources/subscriptions/resourcegroups/read',
+    ])
+
+    ASSIGN_MANAGED_IDENTITY_ACTIONS = frozenset(['microsoft.managedidentity/userassignedidentities/assign/action'])
 
     EXCLUDED_ADMIN_ROLES = frozenset({
         'bda0d508-adf1-4af0-9c28-88919fc3ae06',
@@ -112,6 +159,8 @@ class AzureRoleAnalyzer:
             result = {
                 'owner': False,
                 'access_admin': False,
+                'vm_create': False,
+                'vm_create_with_aad_login': False,
                 'vm_exec': False,
                 'vm_login': False,
                 'vm_update': False,
@@ -131,16 +180,21 @@ class AzureRoleAnalyzer:
                 if any(action_set.issubset(permitted_actions_set) for action_set in self.VM_EXEC_ACTIONS):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['vm_exec'] = True
+                if self.VM_CREATE_ACTIONS.issubset(permitted_actions_set):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['vm_create'] = True
+                if self.VM_CREATE_AADLOGIN_ACTIONS.issubset(permitted_actions_set):
+                    self.neo4j_manager.add_role_def_node(roledef)
+                    result['vm_create_with_aad_login'] = True
                 if any(action_set.issubset(permitted_data_actions_set) for action_set in self.VM_EXEC_DATA_ACTIONS):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['vm_login'] = True
-                if any(action_set.issubset(permitted_actions_set) for action_set in self.VM_UPDATE_ACTIONS):
+                if self.VM_UPDATE_ACTIONS.issubset(permitted_actions_set):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['vm_update'] = True
-                if any(action_set.issubset(permitted_actions_set) for action_set in self.ASSIGN_MANAGED_IDENTITY_ACTIONS):
+                if self.ASSIGN_MANAGED_IDENTITY_ACTIONS.issubset(permitted_actions_set):
                     self.neo4j_manager.add_role_def_node(roledef)
                     result['assign_managed_identity'] = True
-
             if roledef_id not in self.EXCLUDED_ADMIN_ROLES:
                 results.append((roledef_id, result))
         return results
@@ -156,6 +210,8 @@ class AzureRoleAnalyzer:
         
         owner_roles = set()
         access_admin_roles = set()
+        vm_create_roles = set()
+        vm_create_with_aad_login_roles = set()
         vm_exec_roles = set()
         vm_login_roles = set()
         vm_update_roles = set()
@@ -170,6 +226,10 @@ class AzureRoleAnalyzer:
                         owner_roles.add(roledef_id)
                     if result['access_admin']:
                         access_admin_roles.add(roledef_id)
+                    if result['vm_create']:
+                        vm_create_roles.add(roledef_id)
+                    if result['vm_create_with_aad_login']:
+                        vm_create_with_aad_login_roles.add(roledef_id)
                     if result['vm_exec']:
                         vm_exec_roles.add(roledef_id)
                     if result['vm_login']:
@@ -182,6 +242,8 @@ class AzureRoleAnalyzer:
         return {
             "owner_roles": owner_roles,
             "access_admin_roles": access_admin_roles,
+            "vm_create_roles": vm_create_roles,
+            "vm_create_with_aad_login_roles": vm_create_with_aad_login_roles,
             "vm_exec_roles": vm_exec_roles,
             "vm_login_roles": vm_login_roles,
             "vm_update_roles": vm_update_roles,
@@ -288,11 +350,19 @@ class AzureRoleAnalyzer:
 
                 if roledef_id in interesting_roles['owner_roles']:
                     self.neo4j_manager.add_owner_relationship(scope, principal_id)
-                elif roledef_id in interesting_roles['access_admin_roles']:
+                if roledef_id in interesting_roles['access_admin_roles']:
                     self.neo4j_manager.add_access_admin_relationship(scope, principal_id)
-                elif roledef_id in interesting_roles['vm_exec_roles']:
+                if roledef_id in interesting_roles['vm_create_roles']:
+                    print(f"Adding VM create relationship for {principal_id}")
+                    self.neo4j_manager.add_compute_service_node_and_rg_relationships(scope)
+                    self.neo4j_manager.add_vm_create_relationship(scope, principal_id)
+                if roledef_id in interesting_roles['vm_create_with_aad_login_roles']:
+                    print(f"Adding VM create with AAD login relationship for {principal_id}")
+                    self.neo4j_manager.add_compute_service_with_aad_login_node_and_rg_relationships(scope)
+                    self.neo4j_manager.add_vm_create_with_aad_login_relationship(scope, principal_id)
+                if roledef_id in interesting_roles['vm_exec_roles']:
                     self.neo4j_manager.add_vm_exec_relationship(scope, principal_id)
-                elif roledef_id in interesting_roles['vm_login_roles']:
+                if roledef_id in interesting_roles['vm_login_roles']:
                     self.neo4j_manager.add_vm_login_relationship(scope, principal_id)
                 if roledef_id in interesting_roles['vm_update_roles']:
                     self.neo4j_manager.add_vm_update_relationship(scope, principal_id)

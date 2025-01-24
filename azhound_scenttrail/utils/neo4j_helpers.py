@@ -53,6 +53,94 @@ class Neo4jGraphManager:
             database_=self.config.database
         )
 
+    def add_compute_service_node_and_rg_relationships(self, scope: str) -> None:
+        """
+        Add a dummy node to represent potential Azure VMs (without AAD login) that can be created
+        
+        Args:
+            scope (str): The scope of the Azure compute service to determine what resource groups it can be deployed to
+        """
+        records, summary, keys = self.driver.execute_query(
+            '''
+            MATCH (rg:AZResourceGroup)
+            WHERE rg.objectid STARTS WITH $scope
+            RETURN rg.objectid AS object_id
+            ''',
+            scope=scope.upper(),
+            database_=self.config.database
+        )
+
+        for record in records:
+            record_obj = record.data()
+            resource_group_id = record_obj['object_id']
+            dummy_object_id = f"{resource_group_id}/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/DUMMY-NEW-VM"
+            self.driver.execute_query(
+                '''
+                MERGE (rg:AZResourceGroup {objectid: $object_id})
+                MERGE (vm:AZVM {
+                    aadenabled: $aad_enabled,
+                    id: $id,
+                    name: $name,
+                    objectid: $vm_object_id,
+                    operatingsystem: $os,
+                    tenantid: $tenant_id
+                })
+                MERGE (rg)-[:AZContains]->(vm)
+                ''',
+                object_id=resource_group_id,
+                aad_enabled=False,
+                id="00000000-0000-0000-0000-000000000000",
+                name="DUMMY-NEW-VM",
+                vm_object_id=dummy_object_id,
+                os="Any",
+                tenant_id=scope.split('/')[2].upper(),
+                database_=self.config.database
+            )
+
+    def add_compute_service_with_aad_login_node_and_rg_relationships(self, scope: str) -> None:
+        """
+        Add a dummy node to represent potential Azure VMs (with AAD login) that can be created
+        
+        Args:
+            scope (str): The scope of the Azure compute service to determine what resource groups it can be deployed to
+        """
+        records, summary, keys = self.driver.execute_query(
+            '''
+            MATCH (rg:AZResourceGroup)
+            WHERE rg.objectid STARTS WITH $scope
+            RETURN rg.objectid AS object_id
+            ''',
+            scope=scope.upper(),
+            database_=self.config.database
+        )
+
+        for record in records:
+            record_obj = record.data()
+            resource_group_id = record_obj['object_id']
+            dummy_object_id = f"{resource_group_id}/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/DUMMY-NEW-VM"
+            self.driver.execute_query(
+                '''
+                MERGE (rg:AZResourceGroup {objectid: $object_id})
+                MERGE (vm:AZVM {
+                    aadenabled: $aad_enabled,
+                    id: $id,
+                    name: $name,
+                    objectid: $vm_object_id,
+                    operatingsystem: $os,
+                    tenantid: $tenant_id
+                })
+                MERGE (rg)-[:AZContains]->(vm)
+                ''',
+                object_id=resource_group_id,
+                aad_enabled=True,
+                id="00000000-0000-0000-0000-000000000000",
+                name="DUMMY-NEW-VM",
+                vm_object_id=dummy_object_id,
+                os="Any",
+                tenant_id=scope.split('/')[2].upper(),
+                database_=self.config.database
+            )
+
     def add_assignment_relationship(self, principal_id: str, roledef_id: str) -> None:
         """
         Create a role assignment relationship between a principal and a role.
@@ -301,6 +389,46 @@ class Neo4jGraphManager:
             database_=self.config.database
         )
 
+    def add_vm_create_relationship(self, scope: str, principal_id: str) -> None:
+        """
+        Create a VM create relationship between a principal and a VM.
+        
+        Args:
+            scope (str): VM scope
+            principal_id (str): ID of the principal
+        """
+        self.driver.execute_query(
+            '''
+            MATCH (vm:AZVM) 
+            WHERE vm.objectid STARTS WITH $scope AND vm.id="00000000-0000-0000-0000-000000000000" AND vm.aadenabled = false
+            MATCH (principal {objectid: $principal_id})
+            MERGE (principal)-[:AZVMCreate]->(vm)
+            ''',
+            scope=scope.upper(),
+            principal_id=principal_id.upper(),
+            database_=self.config.database
+        )
+
+    def add_vm_create_with_aad_login_relationship(self, scope: str, principal_id: str) -> None:
+        """
+        Create a VM create relationship between a principal and a VM.
+        
+        Args:
+            scope (str): VM scope
+            principal_id (str): ID of the principal
+        """
+        self.driver.execute_query(
+            '''
+            MATCH (vm:AZVM) 
+            WHERE vm.objectid STARTS WITH $scope AND vm.id="00000000-0000-0000-0000-000000000000" AND vm.aadenabled = true
+            MATCH (principal {objectid: $principal_id})
+            MERGE (principal)-[:AZVMCreate]->(vm)
+            ''',
+            scope=scope.upper(),
+            principal_id=principal_id.upper(),
+            database_=self.config.database
+        )
+
     def add_vm_exec_relationship(self, scope: str, principal_id: str) -> None:
         """
         Create a VM contributor relationship between a principal and a VM.
@@ -386,6 +514,14 @@ def add_role_def_node(driver: GraphDatabase, roledef: Dict[str, Any]) -> None:
     manager = Neo4jGraphManager(driver)
     manager.add_role_def_node(roledef)
 
+def add_compute_service_node_and_rg_relationships(driver: GraphDatabase, scope: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.add_compute_service_node_and_rg_relationships(scope)
+
+def add_compute_service_with_aad_login_node_and_rg_relationships(driver: GraphDatabase, scope: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.add_compute_service_with_aad_login_node_and_rg_relationships(scope)
+
 def add_assignment_relationship(driver: GraphDatabase, principal_id: str, roledef_id: str) -> None:
     manager = Neo4jGraphManager(driver)
     manager.add_assignment_relationship(principal_id, roledef_id)
@@ -429,6 +565,14 @@ def add_owner_relationship(driver: GraphDatabase, scope: str, principal_id: str)
 def add_access_admin_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
     manager = Neo4jGraphManager(driver)
     manager.add_access_admin_relationship(scope, principal_id)
+
+def add_vm_create_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.add_vm_create_relationship(scope, principal_id) 
+
+def add_vm_create_with_aad_login_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
+    manager = Neo4jGraphManager(driver)
+    manager.add_vm_create_with_aad_login_relationship(scope, principal_id)   
 
 def add_vm_exec_relationship(driver: GraphDatabase, scope: str, principal_id: str) -> None:
     manager = Neo4jGraphManager(driver)
