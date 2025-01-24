@@ -24,7 +24,8 @@ class AzureRoleAnalyzer:
 
     VM_EXEC_ACTIONS = [
         frozenset(['microsoft.compute/virtualmachines/runcommand/action']),
-        frozenset(['microsoft.compute/virtualmachines/runcommands/write',
+        frozenset(['microsoft.compute/virtualmachines/runcommands/read',
+                   'microsoft.compute/virtualmachines/runcommands/write',
                    'microsoft.resources/subscriptions/resourcegroups/read']),
         frozenset(['microsoft.compute/sshpublickeys/write',
                    'microsoft.compute/virtualmachines/read',
@@ -40,7 +41,6 @@ class AzureRoleAnalyzer:
                                    'microsoft.compute/virtualmachines/write'])
 
     VM_CREATE_ACTIONS = frozenset([
-        'microsoft.compute/virtualmachines/extensions/write',
         'microsoft.compute/virtualmachines/read',
         'microsoft.compute/virtualmachines/write',
         'microsoft.managedidentity/userassignedidentities/assign/action',
