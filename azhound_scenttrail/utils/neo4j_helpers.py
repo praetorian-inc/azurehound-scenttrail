@@ -282,7 +282,7 @@ class Neo4jGraphManager:
             MATCH (manager {objectid: $manager_id})
             MERGE (app_id)-[:AZManagedBy]->(manager)
             ''',
-            app_id=app_id.upper(),
+            object_id=app_id.upper(),
             manager_id=manager_id.upper(),
             database_=self.config.database
         )
